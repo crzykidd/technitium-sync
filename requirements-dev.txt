@@ -1,0 +1,6 @@
+# Development / CI only. Not installed in the Docker image.
+-r requirements.txt
+pytest==8.4.2
+respx==0.22.0
+ruff==0.15.17
+PyYAML==6.0.3

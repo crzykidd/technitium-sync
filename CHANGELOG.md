@@ -1,0 +1,36 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- **Technitium DHCP → STD sync.** Reads the static reservations of every enabled
+  Technitium DHCP scope (or the scopes in `TECHNITIUM_SCOPES`, disabled ones included)
+  and sends them to STD as a full inventory snapshot
+  (`PUT /api/v1/streams/<STREAM_ID>/snapshot`) at startup and every
+  `INTERVAL_SECONDS` (default 300). Each reservation becomes one item keyed by its
+  MAC, with the hostname, IP, scope as network, and the scope and comment as
+  attributes.
+- **Safe snapshots.** A failed Technitium read skips the run and sends nothing, so STD
+  never marks devices missing because of an outage. Reservations without a hostname,
+  with a bad MAC, or with a name or scope over STD's limits are skipped with a warning;
+  the same MAC in two scopes is sent once (the first). More than 5,000 items, or a body
+  over 2 MiB, skips the run instead of sending a partial snapshot.
+- **STD handshake and logging.** Logs STD's version and API revision from
+  `GET /api/v1/meta` at startup and whenever `X-STD-API-Revision` changes, waits (and
+  retries) when STD doesn't support streams yet, logs the stream status, the applied
+  counts, and the pending/disabled/ignored states once per change. Sends
+  `User-Agent: technitium-sync/<version>`.
+- **Resilience.** 5xx and network errors retry with capped exponential backoff
+  (5 s doubling up to the interval); 4xx errors are logged with STD's field errors and
+  retried on the normal interval. Clean shutdown on SIGTERM/SIGINT.
+- **Configuration** by environment variables, validated at startup with a clear message
+  naming each bad variable. Secrets are never logged.
+- **Docker image** `ghcr.io/crzykidd/technitium-sync` (Python 3.11 slim, non-root) with
+  a `HEALTHCHECK` that fails when the last successful snapshot is older than 3 ×
+  `INTERVAL_SECONDS`, and an example `docker-compose.example.yml`.

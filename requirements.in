@@ -1,0 +1,5 @@
+# Runtime dependencies. Edit this file, then regenerate requirements.txt with:
+#    uv pip compile --python-version 3.11 requirements.in -o requirements.txt
+httpx>=0.28,<1
+pydantic>=2,<3
+pydantic-settings>=2,<3

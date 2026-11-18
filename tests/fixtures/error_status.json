@@ -1,0 +1,6 @@
+{
+	"status": "error",
+	"errorMessage": "DHCP scope was not found: Nope",
+	"stackTrace": "   at DnsServerCore.WebServiceDhcpApi.GetDhcpScope(HttpContext context)",
+	"innerErrorMessage": null
+}

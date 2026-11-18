@@ -1,0 +1,31 @@
+name: CodeQL
+
+# SAST (code-checkin-and-pr check 7). An advanced-setup workflow rather than
+# GitHub's "default setup", so the scan is versioned with the code. Do NOT
+# also enable default setup in repo settings: the two conflict.
+# Push-only like CI (the PR's head commit is the dev push), plus a weekly run.
+on:
+  push:
+    branches: [dev, main]
+  schedule:
+    - cron: '0 4 * * 1'  # Monday 04:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:python"

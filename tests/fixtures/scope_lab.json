@@ -1,0 +1,17 @@
+{
+	"response": {
+		"name": "Lab",
+		"startingAddress": "192.168.99.100",
+		"endingAddress": "192.168.99.250",
+		"subnetMask": "255.255.255.0",
+		"reservedLeases": [
+			{
+				"hostName": "lab-pi",
+				"hardwareAddress": "02-99-00-00-00-01",
+				"address": "192.168.99.10",
+				"comments": ""
+			}
+		]
+	},
+	"status": "ok"
+}

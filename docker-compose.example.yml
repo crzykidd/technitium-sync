@@ -1,0 +1,21 @@
+# Example: run technitium-sync next to Technitium and STD.
+# Copy to docker-compose.yml, fill in the two secrets (or use an .env file),
+# then `docker compose up -d`.
+services:
+  technitium-sync:
+    image: ghcr.io/crzykidd/technitium-sync:latest
+    container_name: technitium-sync
+    restart: unless-stopped
+    environment:
+      TECHNITIUM_URL: http://technitium:5380
+      TECHNITIUM_TOKEN: ${TECHNITIUM_TOKEN:-change-me}
+      # Comma list; leave empty for every enabled scope.
+      TECHNITIUM_SCOPES: ""
+      STD_URL: http://service-tracker-dashboard:8815
+      STD_INGEST_KEY: ${STD_INGEST_KEY:-change-me}
+      STREAM_ID: technitium-dhcp
+      STREAM_DISPLAY_NAME: DHCP
+      INTERVAL_SECONDS: "300"
+      LOG_LEVEL: INFO
+      # TECHNITIUM_VERIFY_TLS: "false"   # self-signed Technitium cert
+      # STD_VERIFY_TLS: "false"
