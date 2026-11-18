@@ -6,6 +6,21 @@ the awkward parts of STD's ingest contract from the producer side, to raise with
 
 ---
 
+## 2026-11-17 — Live test phase 1 (harness and one fix)
+
+- **No published ports; a `tools` container reaches the services.** Publishing host
+  ports was unreliable on the dev box, and it avoids any chance of a throwaway DHCP/DNS
+  server listening on the LAN. The seed/ctl scripts run in the sidecar image (it already has
+  httpx) on the compose network, via `run.sh`.
+- **View-only token through a group.** The Technitium user gets DhcpServer View through a
+  dedicated group (`admin/permissions/set` with `groupPermissions`), which the live test showed
+  works and is refused for modify and admin calls.
+- **Disabled stream gets its own message.** "Waiting for approval" was wrong for a stream
+  an operator disabled on purpose, so `disabled` now logs "disabled in STD: snapshots are
+  stored but not applied until it is enabled again" (still once per state change).
+
+---
+
 ## 2026-11-17 — Initial design of technitium-sync 0.1.0
 
 - **Disabled scopes are skipped unless named.** With `TECHNITIUM_SCOPES` empty only
@@ -91,3 +106,13 @@ around here; listed so they can be raised with STD.
 8. **The ingest key must also read `/status`.** §18.5 says "same auth" for the status
    route, which implies the ingest scope covers it; worth stating explicitly, since an
    ingest key "fails read and write checks everywhere else".
+9. **STD only logs a new `User-Agent` on `/api/v1/register`.** Seen live: the streams
+   routes (`meta`, `status`, `snapshot`) show the `technitium-sync/<version>` User-Agent only
+   in the gunicorn access log; there is no application-level "new producer seen" line for
+   them, though STD's README says each distinct User-Agent is logged. Suggest the same once-per-restart log on the
+   ingest routes, so the producer and version are visible without the access log.
+10. **The two 403 causes differ only in free text.** Verified live: a second `ingest` key
+    on an existing stream gets `403 {"error": "This stream belongs to a different API key.",
+    "details": {"stream_id": "..."}}`. `details` carries no reason code, so a producer still
+    can't branch on it (see 2). Note 7 was also seen live: a stream an operator disabled
+    answers `202` with `stream_status: "disabled"`, sharing the pending path.

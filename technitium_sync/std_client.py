@@ -192,13 +192,21 @@ class StdClient:
             if changed:
                 log.warning("Stream %r is set to ignored in STD: snapshots are discarded "
                             "(STD Settings → Streams)", stream_id)
-        elif status in ("pending", "disabled"):
+        elif status == "pending":
             if changed:
-                log.warning("Stream %r is %s: stream is waiting for approval in STD "
+                log.warning("Stream %r is pending: stream is waiting for approval in STD "
                             "Settings → Streams (%s item(s) stored, not applied)",
-                            stream_id, status, body.get("item_count"))
+                            stream_id, body.get("item_count"))
             else:
-                log.debug("Stream %r still %s; snapshot stored", stream_id, status)
+                log.debug("Stream %r still pending; snapshot stored", stream_id)
+        elif status == "disabled":
+            # Someone turned it off on purpose; don't tell them to "approve" it.
+            if changed:
+                log.warning("Stream %r is disabled in STD: snapshots are stored but not applied "
+                            "until it is enabled again (STD Settings → Streams; %s item(s) stored)",
+                            stream_id, body.get("item_count"))
+            else:
+                log.debug("Stream %r still disabled; snapshot stored", stream_id)
         else:
             log.warning("STD accepted the snapshot (HTTP %d) with unexpected status %r",
                         response.status_code, status)

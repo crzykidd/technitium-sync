@@ -51,7 +51,9 @@ def test_202_pending_warns_once_per_state_change(client, mock, caplog):
     for _ in range(4):
         assert client.put_snapshot("technitium-dhcp", BODY) is Outcome.OK
     warnings = [r for r in caplog.records if "waiting for approval" in r.getMessage()]
-    assert len(warnings) == 3  # pending, disabled, pending again; not the repeat
+    assert len(warnings) == 2  # pending, pending again; the repeat is silent
+    disabled_warnings = [r for r in caplog.records if "disabled in STD" in r.getMessage()]
+    assert len(disabled_warnings) == 1
     assert all(r.levelno == logging.WARNING for r in warnings)
 
 

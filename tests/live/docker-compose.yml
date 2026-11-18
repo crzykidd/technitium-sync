@@ -1,0 +1,57 @@
+# Throwaway live-test stack: Technitium + STD (:dev) + technitium-sync built from this repo.
+# Run with the project name `tsync-livetest` (see docs/live-test-phase1.md and run.sh).
+# No ports are published: scripts reach the services over the compose network through
+# the `tools` service (the sync image with python as entrypoint).
+name: tsync-livetest
+
+services:
+  technitium:
+    image: technitium/dns-server:latest
+    hostname: technitium
+    environment:
+      DNS_SERVER_DOMAIN: technitium.test
+      DNS_SERVER_ADMIN_PASSWORD: ${TECH_ADMIN_PASSWORD:?set in tests/live/.env}
+    networks: [livetest]
+
+  std:
+    image: ghcr.io/crzykidd/service-tracker-dashboard:dev
+    environment:
+      FLASK_DEBUG: "0"
+    volumes:
+      - std-config:/config
+    networks: [livetest]
+
+  technitium-sync:
+    build: ../..
+    profiles: [sync]
+    environment:
+      TECHNITIUM_URL: http://technitium:5380
+      TECHNITIUM_TOKEN: ${TECHNITIUM_TOKEN:-unset}
+      TECHNITIUM_SCOPES: ${TECHNITIUM_SCOPES:-}
+      STD_URL: http://std:8815
+      STD_INGEST_KEY: ${STD_INGEST_KEY:-unset}
+      STREAM_ID: technitium-dhcp
+      INTERVAL_SECONDS: "60"
+      LOG_LEVEL: DEBUG
+    networks: [livetest]
+
+  # Helper for the seed/verify scripts: same image, python as entrypoint.
+  tools:
+    build: ../..
+    profiles: [tools]
+    entrypoint: ["python"]
+    volumes:
+      - ./:/live:ro
+    environment:
+      TECH_ADMIN_PASSWORD: ${TECH_ADMIN_PASSWORD:-}
+      STD_ADMIN_PASSWORD: ${STD_ADMIN_PASSWORD:-changeme123}
+      STD_WRITE_KEY: ${STD_WRITE_KEY:-}
+      STD_INGEST_KEY2: ${STD_INGEST_KEY2:-}
+    networks: [livetest]
+
+networks:
+  livetest:
+    driver: bridge
+
+volumes:
+  std-config:

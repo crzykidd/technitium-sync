@@ -151,7 +151,8 @@ Technitium or STD has been failing for three intervals.
 | `STD API revision changed: 2 -> 3` | STD was upgraded; logged whenever `X-STD-API-Revision` changes |
 | `STD too old for streams (needs API revision ≥ 2 / STD 0.10.0)` | Upgrade STD. technitium-sync keeps checking every interval |
 | `Stream 'technitium-dhcp' not created yet; the first snapshot will create it as pending` | First run against this STD |
-| `stream is waiting for approval in STD Settings → Streams` | The stream is pending (or disabled): enable it in STD. Logged once per state change |
+| `stream is waiting for approval in STD Settings → Streams` | The stream is pending: enable it in STD. Logged once per state change |
+| `Stream … is disabled in STD: snapshots are stored but not applied` | Someone disabled the stream in STD; enable it again to resume. Logged once per state change |
 | `Stream … is set to ignored in STD` | Someone chose Ignore in STD; snapshots are discarded |
 | `Snapshot applied: 42 item(s); created=…, updated=…, missing=…` | Normal operation |
 | `Skipping reservation … no hostname` | Give the reservation a hostname in Technitium |
@@ -196,6 +197,10 @@ docker build -t technitium-sync:dev .
 Runtime dependencies live in `requirements.in`; regenerate the pinned
 `requirements.txt` with `uv pip compile --python-version 3.11 requirements.in -o requirements.txt`.
 Design decisions are in [`docs/decisions.md`](docs/decisions.md).
+
+An end-to-end test against a throwaway Technitium and STD (Docker, no published ports) lives
+in [`tests/live/`](tests/live/); [`docs/live-test-phase1.md`](docs/live-test-phase1.md) has the
+results and how to re-run it (`tests/live/run.sh up`, `sync`, `down`).
 
 ## License
 
