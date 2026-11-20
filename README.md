@@ -22,12 +22,18 @@ the STD side; a device that disappears from Technitium is shown as missing.
 It's also meant as a readable reference for writing your own sidecar (Pi-hole, Kea, …);
 see [Write your own sidecar](#write-your-own-sidecar).
 
-> **Status:** 0.1.0 is not released yet. It needs STD 0.10.0 or later (API revision 2,
-> the `streams` feature).
+> **Requires** STD 0.10.0 or later (API revision 2, the `streams` feature).
 
 ## What's New
 
-Nothing released yet. See [CHANGELOG.md](CHANGELOG.md) `[Unreleased]`.
+### v0.1.0 (2026-11-19)
+
+First release. technitium-sync reads the static reservations of your Technitium DHCP
+scopes and sends them to STD as a full inventory snapshot every 5 minutes, keyed by MAC.
+A failed or partial Technitium read never sends a snapshot, so STD doesn't mark devices
+missing during an outage. It retries STD with backoff, logs stream state changes once,
+validates its settings at startup, and ships as a non-root Docker image with a
+healthcheck. See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 ## What gets sent
 

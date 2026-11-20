@@ -6,6 +6,24 @@ the awkward parts of STD's ingest contract from the producer side, to raise with
 
 ---
 
+## 2026-11-19 — First release 0.1.0: one-time skip of the "not newer" check
+
+- **Why.** `VERSION` was already `0.1.0` from the scaffold, and `/release-prep` refuses
+  a target that isn't newer than `VERSION` (a hard stop, with no first-release path).
+  The check exists to stop re-shipping or going backwards; here no `v0.1.0` tag or
+  release existed, so it was skipped once, with the operator's go-ahead. Every other
+  step (tag check, changelog roll, README sync, local checks, one commit, PR) ran as
+  written; `VERSION` didn't need a bump.
+- **Rejected:** a throwaway `0.0.1` first release (`VERSION` set back to `0.0.1`) just to
+  satisfy the check. It was considered, then dropped once STD 0.10.0 was out.
+- **Validation.** The operator tested the sidecar against a production STD instead of
+  the planned dev-STD "phase 2" run, so `docs/live-test-phase2.md` wasn't written.
+- **Later releases** go through `/release-prep` unchanged. The standard could use a
+  first-release path (target == `VERSION`, no tag, no release); worth raising in
+  `homelab-configs`.
+
+---
+
 ## 2026-11-17 — Live test phase 1 (harness and one fix)
 
 - **No published ports; a `tools` container reaches the services.** Publishing host
