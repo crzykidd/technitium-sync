@@ -1,0 +1,32 @@
+{
+	"response": {
+		"name": "IoT",
+		"startingAddress": "192.168.20.100",
+		"endingAddress": "192.168.20.250",
+		"subnetMask": "255.255.255.0",
+		"leaseTimeDays": 1,
+		"leaseTimeHours": 0,
+		"leaseTimeMinutes": 0,
+		"domainName": "iot.home.arpa",
+		"routerAddress": "192.168.20.1",
+		"exclusions": [],
+		"reservedLeases": [
+			{
+				"hostName": "shelly-pump",
+				"hardwareAddress": "02-AA-BB-CC-00-01",
+				"address": "192.168.20.21",
+				"comments": null
+			},
+			{
+				"hostName": "nas-iot-leg",
+				"hardwareAddress": "02-11-22-33-44-01",
+				"address": "192.168.20.10",
+				"comments": "same NIC as LAN nas"
+			}
+		],
+		"allowOnlyReservedLeases": true,
+		"blockLocallyAdministeredMacAddresses": false,
+		"ignoreClientIdentifierOption": true
+	},
+	"status": "ok"
+}

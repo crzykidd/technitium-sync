@@ -1,0 +1,43 @@
+{
+	"response": {
+		"name": "LAN",
+		"startingAddress": "192.168.10.100",
+		"endingAddress": "192.168.10.250",
+		"subnetMask": "255.255.255.0",
+		"leaseTimeDays": 7,
+		"leaseTimeHours": 0,
+		"leaseTimeMinutes": 0,
+		"offerDelayTime": 0,
+		"pingCheckEnabled": false,
+		"domainName": "home.arpa",
+		"dnsUpdates": true,
+		"dnsTtl": 900,
+		"routerAddress": "192.168.10.1",
+		"useThisDnsServer": true,
+		"exclusions": [],
+		"reservedLeases": [
+			{
+				"hostName": "nas",
+				"hardwareAddress": "02-11-22-33-44-01",
+				"address": "192.168.10.10",
+				"comments": "Rack, top shelf"
+			},
+			{
+				"hostName": "printer",
+				"hardwareAddress": "02-11-22-33-44-02",
+				"address": "192.168.10.11",
+				"comments": ""
+			},
+			{
+				"hostName": null,
+				"hardwareAddress": "02-11-22-33-44-03",
+				"address": "192.168.10.12",
+				"comments": "unknown device"
+			}
+		],
+		"allowOnlyReservedLeases": false,
+		"blockLocallyAdministeredMacAddresses": false,
+		"ignoreClientIdentifierOption": true
+	},
+	"status": "ok"
+}
