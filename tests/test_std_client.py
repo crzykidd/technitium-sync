@@ -113,10 +113,10 @@ def test_revision_change_is_logged(client, mock, caplog):
     ])
     for _ in range(3):
         client.put_snapshot("technitium-dhcp", BODY)
-    messages = [r.getMessage() for r in caplog.records if "API revision" in r.getMessage()]
+    messages = [r.getMessage() for r in caplog.records if r.getMessage().startswith("STD API revision")]
     assert messages == ["STD API revision 2 (STD 0.10.0)",
                         "STD API revision changed: 2 -> 3 (STD 0.11.0)"]
-    assert client.api_revision == "3"
+    assert client.api_revision == 3
 
 
 def test_meta_with_streams(client, mock, caplog):
@@ -165,3 +165,76 @@ def test_non_json_error_body(client, mock, caplog):
     mock.put(SNAPSHOT).respond(413, text="<html>413 Request Entity Too Large</html>")
     client.put_snapshot("technitium-dhcp", BODY)
     assert "413 Request Entity Too Large" in caplog.text
+
+
+WARNING_TEXT = "STD too old for interval reporting (needs API revision ≥ 3 / STD 0.10.1)"
+
+
+@pytest.mark.parametrize("raw, expected, supported", [
+    ("2", 2, False), ("3", 3, True), ("4", 4, True), ("garbage", None, False), ("", None, False),
+])
+def test_revision_is_parsed_and_gates_the_interval(client, mock, raw, expected, supported):
+    mock.get("/api/v1/meta").respond(200, json={"features": ["streams"]},
+                                     headers={"X-STD-API-Revision": raw})
+    client.check_meta()
+    assert client.api_revision == expected
+    assert client.interval_supported is supported
+
+
+def test_revision_missing_everywhere_is_unsupported(client, mock):
+    mock.get("/api/v1/meta").respond(200, json={"features": ["streams"]})
+    client.check_meta()
+    assert client.api_revision is None and client.interval_supported is False
+
+
+def test_revision_falls_back_to_meta_body(client, mock):
+    mock.get("/api/v1/meta").respond(200, json={"api_revision": 3, "features": ["streams"]})
+    client.check_meta()
+    assert client.interval_supported is True
+
+
+def test_header_change_moves_the_gate_both_ways(client, mock):
+    ok = {"stream_status": "enabled", "applied": True, "item_count": 0, "counts": {}}
+    mock.put(SNAPSHOT).mock(side_effect=[
+        httpx.Response(200, json=ok, headers={"X-STD-API-Revision": r}) for r in ("2", "3", "2")])
+    seen = []
+    for _ in range(3):
+        client.put_snapshot("technitium-dhcp", BODY)
+        seen.append(client.interval_supported)
+    assert seen == [False, True, False]
+
+
+def test_below_3_warns_once_per_revision_change(client, mock, caplog):
+    ok = {"stream_status": "enabled", "applied": True, "item_count": 0, "counts": {}}
+    mock.put(SNAPSHOT).mock(side_effect=[
+        httpx.Response(200, json=ok, headers={"X-STD-API-Revision": r}) for r in ("2", "2", "3", "2")])
+    for _ in range(4):
+        client.put_snapshot("technitium-dhcp", BODY)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and WARNING_TEXT in r.getMessage()]
+    assert len(warnings) == 2  # at 2 (once, not twice), and again after 3 -> 2
+    assert "staleness uses STD's default" in warnings[0].getMessage()
+
+
+def test_no_warning_at_revision_3(client, mock, caplog):
+    mock.get("/api/v1/meta").respond(200, json=load_fixture("std_meta.json"),
+                                     headers={"X-STD-API-Revision": "3"})
+    client.check_meta()
+    assert WARNING_TEXT not in caplog.text
+
+
+@pytest.mark.parametrize("code, flagged", [(400, True), (409, True), (413, True), (401, False),
+                                           (403, False), (200, False)])
+def test_rejections_flag_a_meta_recheck(client, mock, code, flagged):
+    mock.put(SNAPSHOT).respond(code, json={"error": "x", "details": None, "stream_status": "enabled"})
+    client.put_snapshot("technitium-dhcp", BODY)
+    assert client.meta_recheck_needed is flagged
+
+
+def test_400_message_is_not_just_a_bug_report(client, mock, caplog):
+    mock.put(SNAPSHOT).respond(400, json={"error": "Invalid request body", "details": [
+        {"loc": ["snapshot_interval_seconds"], "msg": "Extra inputs are not permitted"}]})
+    client.put_snapshot("technitium-dhcp", BODY)
+    message = caplog.records[-1].getMessage()
+    assert "snapshot_interval_seconds: Extra inputs are not permitted" in message
+    assert "revision mismatch" in message and "re-checked" in message
+    assert "last rejection" in message

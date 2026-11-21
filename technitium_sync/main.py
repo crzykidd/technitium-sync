@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 
-from technitium_sync.config import ConfigError, Settings, load_settings
+from technitium_sync.config import MAX_REPORTED_INTERVAL, ConfigError, Settings, load_settings
 from technitium_sync.health import HealthState, start_health_server
 from technitium_sync.mapping import MAX_BODY_BYTES, MAX_ITEMS, build_items
 from technitium_sync.std_client import Outcome, StdClient
@@ -50,6 +50,10 @@ class Syncer:
         self.health = health or HealthState()
         self.backoff = Backoff(cap=settings.interval_seconds)
         self._std_ready = False
+        if settings.interval_seconds > MAX_REPORTED_INTERVAL:
+            log.warning("INTERVAL_SECONDS %d is over STD's maximum of %d: STD is told %d, so it may "
+                        "mark the stream stale early", settings.interval_seconds,
+                        MAX_REPORTED_INTERVAL, MAX_REPORTED_INTERVAL)
 
     def _retry(self) -> int:
         delay = self.backoff.next()
@@ -67,8 +71,10 @@ class Syncer:
         s = self.settings
 
         # Until STD has confirmed it speaks streams, check meta first: there's
-        # no point reading Technitium for a server that can't take the result.
-        if not self._std_ready:
+        # no point reading Technitium for a server that can't take the result. Check it
+        # again after a 400/409/413, because STD may have been swapped for another version.
+        if not self._std_ready or self.std.meta_recheck_needed:
+            first_check = not self._std_ready
             outcome = self.std.check_meta()
             if outcome is not Outcome.OK:
                 self._fail(self.std.last_error or "std: unavailable")
@@ -77,7 +83,8 @@ class Syncer:
             if outcome is Outcome.REJECTED:
                 return self._wait_interval()
             self._std_ready = True
-            self.std.log_stream_status(s.stream_id)
+            if first_check:
+                self.std.log_stream_status(s.stream_id)
 
         try:
             reservations = read_reservations(self.technitium, s.technitium_scopes)
@@ -112,6 +119,10 @@ class Syncer:
             "key_type": "mac",
             "items": result.items,
         }
+        if self.std.interval_supported:
+            # Optional, revision 3+ only; STD clears the stored value when it is absent,
+            # so it goes on every snapshot. An older STD would answer 400.
+            payload["snapshot_interval_seconds"] = s.reported_interval_seconds
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         if len(body) > MAX_BODY_BYTES:
             log.error("Snapshot body is %d bytes, over STD's 2 MiB limit; skipping this run",

@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Snapshot interval reporting.** Every snapshot now carries `snapshot_interval_seconds`
+  (`INTERVAL_SECONDS`, capped at STD's maximum of 86400) so STD can tell when this
+  producer has gone quiet. It is sent only when STD reports API revision 3 or later
+  (STD 0.10.1); STD 0.10.0 keeps working unchanged and receives the same snapshot as
+  before, with a one-time warning that staleness uses STD's default. After a rejected
+  snapshot (400, 409 or 413) `GET /api/v1/meta` is re-checked before the next push, in
+  case STD was downgraded, and the 400 log line now mentions a possible STD revision
+  mismatch instead of calling every 400 a bug.
 - **Health endpoint.** `GET /healthz` answers `200 OK` only when the most recent
   sync cycle succeeded (Technitium read and STD accepted the snapshot) and the last
   success is within `HEALTH_MAX_AGE`. Otherwise it answers `503` with a one-line reason

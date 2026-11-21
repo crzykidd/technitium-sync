@@ -19,6 +19,9 @@ REVISION_HEADER = "X-STD-API-Revision"
 VERSION_HEADER = "X-STD-Version"
 STREAMS_FEATURE = "streams"
 TOO_OLD = "std: streams not supported (needs STD 0.10.0)"
+# `snapshot_interval_seconds` (PRD §18.5 / §18.9) exists from API revision 3 (STD 0.10.1).
+# An older STD rejects the unknown key with a 400, so it is only sent from this revision on.
+INTERVAL_MIN_REVISION = 3
 
 
 class Outcome(enum.Enum):
@@ -27,6 +30,17 @@ class Outcome(enum.Enum):
     OK = "ok"  # accepted (200, or 202 stored/ignored): wait the normal interval
     REJECTED = "rejected"  # our request or key is wrong (4xx): wait the normal interval
     RETRY = "retry"  # 5xx or network error: retry soon, with backoff
+
+
+def parse_revision(raw: object) -> int | None:
+    """An API revision as an int, or None when missing or not a plain integer."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return int(raw.strip())
+    return None
 
 
 def describe_error(response: httpx.Response) -> str:
@@ -64,7 +78,12 @@ class StdClient:
             verify=verify_tls,
             timeout=timeout,
         )
-        self.api_revision: str | None = None
+        # STD's API revision as an int, None while unknown or unparsable (the safe side:
+        # the interval is not sent). Kept current by the header on every response.
+        self.api_revision: int | None = None
+        # Set after a 400, 409 or 413: STD may have been swapped for another version, so
+        # the caller re-checks `meta` before the next push. Cleared by a good `check_meta`.
+        self.meta_recheck_needed = False
         self._last_stream_status: str | None = None
         # Short reason for the most recent failed call, None after a success. It feeds
         # /healthz, so it is built from status codes and STD's error text only.
@@ -76,15 +95,30 @@ class StdClient:
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         """Send a request and track `X-STD-API-Revision`. Network errors propagate."""
         response = self._http.request(method, path, **kwargs)
-        revision = response.headers.get(REVISION_HEADER)
-        if revision is not None and revision != self.api_revision:
-            if self.api_revision is None:
-                log.info("STD API revision %s (STD %s)", revision, response.headers.get(VERSION_HEADER, "?"))
-            else:
-                log.info("STD API revision changed: %s -> %s (STD %s)", self.api_revision, revision,
-                         response.headers.get(VERSION_HEADER, "?"))
-            self.api_revision = revision
+        raw = response.headers.get(REVISION_HEADER)
+        if raw is not None:
+            self._set_revision(raw, response.headers.get(VERSION_HEADER, "?"))
         return response
+
+    @property
+    def interval_supported(self) -> bool:
+        """True when STD is known to accept `snapshot_interval_seconds` (revision 3+)."""
+        return self.api_revision is not None and self.api_revision >= INTERVAL_MIN_REVISION
+
+    def _set_revision(self, raw: object, std_version: object) -> None:
+        """Store a revision seen in a header or in `meta`; log changes, warn when below 3."""
+        revision = parse_revision(raw)
+        if revision == self.api_revision:
+            return
+        previous = self.api_revision
+        self.api_revision = revision
+        if previous is None:
+            log.info("STD API revision %s (STD %s)", raw, std_version)
+        else:
+            log.info("STD API revision changed: %s -> %s (STD %s)", previous, raw, std_version)
+        if revision is not None and revision < INTERVAL_MIN_REVISION:
+            log.warning("STD too old for interval reporting (needs API revision ≥ 3 / STD 0.10.1); "
+                        "staleness uses STD's default")
 
     # --- startup checks ---------------------------------------------------------
 
@@ -112,6 +146,8 @@ class StdClient:
                       "GET /api/v1/meta returned HTTP %d", response.status_code)
             self.last_error = TOO_OLD
             return Outcome.REJECTED
+        if self.api_revision is None:  # no usable header: fall back to the body
+            self._set_revision(meta.get("api_revision"), meta.get("std_version", "?"))
         log.info("Connected to STD %s, API revision %s", meta.get("std_version", "?"),
                  meta.get("api_revision", "?"))
         if STREAMS_FEATURE not in (meta.get("features") or []):
@@ -120,6 +156,7 @@ class StdClient:
             self.last_error = TOO_OLD
             return Outcome.REJECTED
         self.last_error = None
+        self.meta_recheck_needed = False
         return Outcome.OK
 
     def log_stream_status(self, stream_id: str) -> None:
@@ -170,9 +207,14 @@ class StdClient:
             return Outcome.RETRY
         if code in (200, 202):
             return self._accepted(stream_id, response)
+        if code in (400, 409, 413):
+            self.meta_recheck_needed = True  # STD may have changed version; see Syncer.run_once
         if code == 400:
-            log.error("STD rejected the snapshot as invalid (HTTP 400; a technitium-sync bug, "
-                      "please report it): %s", describe_error(response))
+            log.error("STD rejected the snapshot as invalid (HTTP 400): %s. Either a "
+                      "technitium-sync bug (please report it) or an STD revision mismatch, such "
+                      "as snapshot_interval_seconds sent to an STD that does not accept it; "
+                      "STD's meta will be re-checked before the next push. The same text is in "
+                      "STD under the stream's last rejection.", describe_error(response))
         elif code in (401, 403):
             log.error("STD refused the snapshot (HTTP %d): check STD_INGEST_KEY / key scope "
                       "(a stream belongs to the ingest key that created it) — %s",

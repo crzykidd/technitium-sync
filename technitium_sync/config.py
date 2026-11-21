@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 STREAM_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 MIN_INTERVAL = 60
+MAX_REPORTED_INTERVAL = 86400  # STD accepts snapshot_interval_seconds 60-86400
 
 
 class ConfigError(Exception):
@@ -101,6 +102,11 @@ class Settings(BaseSettings):
         if value not in LOG_LEVELS:
             raise ValueError(f"must be one of {', '.join(LOG_LEVELS)}")
         return value
+
+    @property
+    def reported_interval_seconds(self) -> int:
+        """`INTERVAL_SECONDS` clamped to the range STD accepts for `snapshot_interval_seconds`."""
+        return min(self.interval_seconds, MAX_REPORTED_INTERVAL)
 
     @property
     def log_level_number(self) -> int:

@@ -6,6 +6,35 @@ the awkward parts of STD's ingest contract from the producer side, to raise with
 
 ---
 
+## 2026-11-20 — Send `snapshot_interval_seconds`, gated on API revision 3
+
+- **What.** STD 0.10.1 (API revision 3, PRD §18.5 / §18.9) accepts an optional
+  `snapshot_interval_seconds` (int, 60–86400) in the snapshot body and uses it for
+  staleness (no snapshot for more than 2 × interval). The PRD matches the handoff
+  prompt on name, type, range and placement (top-level in the PUT body). It is rolled
+  into the unreleased 0.2.0.
+- **Gate on the revision, not on trial and error.** `StdClient.api_revision` is an int
+  parsed from the `X-STD-API-Revision` header on every response (the `meta` body is the
+  fallback when the header is missing). The field is sent only when it is known and
+  ≥ 3; unknown or unparsable means leave it out. No timer and no per-run `meta` call:
+  the header already tracks the revision, including a downgrade (3 → 2 drops the field
+  from the next snapshot). The cost of that is one snapshot sent into a downgraded STD
+  before the header shows it, which is the 400 below.
+- **Re-check `meta` after a 400, 409 or 413** (`StdClient.meta_recheck_needed`, handled
+  at the top of `Syncer.run_once`). If that fails, nothing is pushed and the existing
+  retry and backoff apply, so "meta failed, so omit the field" holds because we never
+  push without `meta`. Rejections still log at ERROR and keep the normal schedule; the
+  400 message no longer says "a technitium-sync bug" and names a possible revision
+  mismatch and STD's last-rejection record. 202 (`pending`, `disabled`, `ignored`)
+  stays accepted: no backoff, a full snapshot every interval.
+- **Clamp, don't reject, above 86400.** `INTERVAL_SECONDS` already has a minimum of 60.
+  Rejecting at config time would break an operator who legitimately syncs less than
+  daily; clamping (`Settings.reported_interval_seconds`) with one startup WARNING is
+  smaller and harmless apart from STD flagging staleness early. No new env var.
+- **Below-3 warning** is logged once per revision change (`_set_revision`), not per run.
+
+---
+
 ## 2026-11-20 — HTTP health endpoint (`/healthz`, `/status`)
 
 - **Supersedes** the "HTTP health endpoint was rejected" point of the 2026-11-17
@@ -166,3 +195,10 @@ around here; listed so they can be raised with STD.
     "details": {"stream_id": "..."}}`. `details` carries no reason code, so a producer still
     can't branch on it (see 2). Note 7 was also seen live: a stream an operator disabled
     answers `202` with `stream_status: "disabled"`, sharing the pending path.
+11. **An optional field that an older revision rejects forces producers to gate on the
+    revision.** `snapshot_interval_seconds` (revision 3) is optional, but STD 0.10.0
+    answers 400 to unknown keys (`extra="forbid"`), so every producer must read
+    `api_revision` and conditionally build its body, plus handle a downgrade. Ignoring
+    unknown fields (or listing accepted ones in `meta`) would be friendlier. Also,
+    omitting the field clears the stored value, so a producer that skips one snapshot
+    silently loses its interval.

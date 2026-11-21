@@ -131,3 +131,12 @@ def test_health_bad_values_are_named(env):
         load_settings()
     text = str(exc.value)
     assert "HEALTH_MAX_AGE" in text and "HEALTH_PORT" in text
+
+
+def test_reported_interval_is_clamped_to_std_range(env):
+    env.setenv("INTERVAL_SECONDS", "60")
+    assert load_settings().reported_interval_seconds == 60
+    env.setenv("INTERVAL_SECONDS", "86400")
+    assert load_settings().reported_interval_seconds == 86400
+    env.setenv("INTERVAL_SECONDS", "90000")
+    assert load_settings().reported_interval_seconds == 86400
