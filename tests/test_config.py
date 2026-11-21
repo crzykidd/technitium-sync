@@ -104,3 +104,30 @@ def test_blank_token(env):
     env.setenv("TECHNITIUM_TOKEN", "  ")
     with pytest.raises(ConfigError, match="TECHNITIUM_TOKEN"):
         load_settings()
+
+
+def test_health_defaults_follow_interval(env):
+    s = load_settings()
+    assert s.health_port == 8080
+    assert s.health_max_age == 900  # 3 x 300
+    env.setenv("INTERVAL_SECONDS", "120")
+    assert load_settings().health_max_age == 360
+
+
+def test_health_max_age_must_cover_interval(env):
+    env.setenv("INTERVAL_SECONDS", "300")
+    env.setenv("HEALTH_MAX_AGE", "299")
+    with pytest.raises(ConfigError, match="HEALTH_MAX_AGE: .*INTERVAL_SECONDS"):
+        load_settings()
+    env.setenv("HEALTH_MAX_AGE", "300")
+    assert load_settings().health_max_age == 300
+
+
+def test_health_bad_values_are_named(env):
+    env.setenv("HEALTH_MAX_AGE", "soon")
+    env.setenv("HEALTH_PORT", "70000")
+    text = ""
+    with pytest.raises(ConfigError) as exc:
+        load_settings()
+    text = str(exc.value)
+    assert "HEALTH_MAX_AGE" in text and "HEALTH_PORT" in text

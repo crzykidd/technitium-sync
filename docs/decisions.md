@@ -6,6 +6,38 @@ the awkward parts of STD's ingest contract from the producer side, to raise with
 
 ---
 
+## 2026-11-20 — HTTP health endpoint (`/healthz`, `/status`)
+
+- **Supersedes** the "HTTP health endpoint was rejected" point of the 2026-11-17
+  "Heartbeat-file healthcheck" entry. STD needs to check push health over the network
+  (http check, mode `body`: up only when the body is exactly `OK`), and a container
+  check alone showed green with a bad token or an STD 4xx/5xx. The cost, one listening
+  port on an otherwise outbound-only sidecar, is accepted.
+- **Health is the last cycle, not the last success.** A cycle succeeds only when the
+  Technitium read worked and STD accepted the snapshot. After any failure `/healthz` is
+  503 with the reason even if the last success is recent; success clears it. `OK` is
+  never returned before the first success (`starting`). A stale last success is 503
+  `last push Nm ago`.
+- **202 counts as healthy** (as with the heartbeat): pending, disabled or ignored
+  means the sidecar is doing its job; the stream state is STD's concern.
+- **Reasons are built, not echoed.** Short prefixed strings from status codes and STD's
+  error text (`describe_error`), never exception reprs. The state also scrubs the two
+  configured secrets, collapses whitespace and caps the line at 200 chars. `StdClient`
+  keeps `last_error`, `TechnitiumError` carries a `reason`.
+- **Config.** `HEALTH_MAX_AGE` defaults to 3 × `INTERVAL_SECONDS` and must be at least
+  `INTERVAL_SECONDS`. `HEALTH_PORT` defaults to 8080. No `HEALTH_BIND`: the container
+  must listen on all interfaces for STD, and the port is only reachable from outside
+  when the operator publishes it or shares a Docker network, so a bind setting adds
+  little. If the port is taken, startup fails with a message. Request lines log at DEBUG.
+- **Docker healthcheck** now calls `/healthz` (one definition of healthy) and keeps
+  `HEARTBEAT_FILE` written and accepted so existing deployments don't break; nothing
+  reads it. Because one failed cycle now flips health, `--retries` went from 1 to 3
+  (interval 60s, so about 3 minutes) to avoid flapping on a blip; STD's own check is
+  the fast signal.
+- **Stdlib only** (`ThreadingHTTPServer` on a daemon thread), no new dependency.
+
+---
+
 ## 2026-11-19 — First release 0.1.0: one-time skip of the "not newer" check
 
 - **Why.** `VERSION` was already `0.1.0` from the scaffold, and `/release-prep` refuses

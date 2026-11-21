@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Health endpoint.** `GET /healthz` answers `200 OK` only when the most recent
+  sync cycle succeeded (Technitium read and STD accepted the snapshot) and the last
+  success is within `HEALTH_MAX_AGE`. Otherwise it answers `503` with a one-line reason
+  such as `technitium: invalid-token`, `std: 401 check STD_INGEST_KEY`,
+  `last push 22m ago` or `starting`. Built for STD's http check in `body` mode, so a
+  bad token or an STD error no longer shows green. `GET /status` returns the same
+  verdict and the last attempt, success, error and item count as JSON.
+- `HEALTH_PORT` (default `8080`) and `HEALTH_MAX_AGE` (seconds, default 3 ×
+  `INTERVAL_SECONDS`, never below `INTERVAL_SECONDS`).
+
+### Changed
+
+- The Docker healthcheck now calls `/healthz` instead of reading the heartbeat file, so
+  there is one definition of healthy, and the image declares `EXPOSE 8080` and retries
+  3 times. `HEARTBEAT_FILE` is still written and still accepted, but nothing reads it.
+
 ## [0.1.0] — 2026-11-19
 
 ### Added

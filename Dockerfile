@@ -28,8 +28,10 @@ LABEL org.opencontainers.image.source="https://github.com/crzykidd/technitium-sy
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin tsync
 USER tsync
 
-# Healthy while the last successful snapshot is newer than 3 x INTERVAL_SECONDS.
-HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=1 \
+# /healthz (HEALTH_PORT, default 8080): healthy while the last push cycle succeeded.
+# One failed cycle flips it, so 3 retries (about 3 minutes) keep a blip from showing red.
+EXPOSE 8080
+HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
     CMD ["python", "-m", "technitium_sync", "healthcheck"]
 
 CMD ["python", "-m", "technitium_sync"]

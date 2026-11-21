@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 REVISION_HEADER = "X-STD-API-Revision"
 VERSION_HEADER = "X-STD-Version"
 STREAMS_FEATURE = "streams"
+TOO_OLD = "std: streams not supported (needs STD 0.10.0)"
 
 
 class Outcome(enum.Enum):
@@ -65,6 +66,9 @@ class StdClient:
         )
         self.api_revision: str | None = None
         self._last_stream_status: str | None = None
+        # Short reason for the most recent failed call, None after a success. It feeds
+        # /healthz, so it is built from status codes and STD's error text only.
+        self.last_error: str | None = None
 
     def close(self) -> None:
         self._http.close()
@@ -90,9 +94,11 @@ class StdClient:
             response = self._request("GET", "/api/v1/meta")
         except httpx.HTTPError as exc:
             log.error("Cannot reach STD at %s: %s", self._http.base_url, exc)
+            self.last_error = "std: unreachable"
             return Outcome.RETRY
         if response.status_code >= 500:
             log.error("STD meta returned HTTP %d: %s", response.status_code, describe_error(response))
+            self.last_error = f"std: {response.status_code} {describe_error(response)}"
             return Outcome.RETRY
         meta = None
         if response.status_code == 200:
@@ -104,13 +110,16 @@ class StdClient:
             # STD before 0.10.0 has no /api/v1/meta at all (404).
             log.error("STD too old for streams (needs API revision ≥ 2 / STD 0.10.0): "
                       "GET /api/v1/meta returned HTTP %d", response.status_code)
+            self.last_error = TOO_OLD
             return Outcome.REJECTED
         log.info("Connected to STD %s, API revision %s", meta.get("std_version", "?"),
                  meta.get("api_revision", "?"))
         if STREAMS_FEATURE not in (meta.get("features") or []):
             log.error("STD too old for streams (needs API revision ≥ 2 / STD 0.10.0); "
                       "features: %s", ", ".join(map(str, meta.get("features") or [])) or "none")
+            self.last_error = TOO_OLD
             return Outcome.REJECTED
+        self.last_error = None
         return Outcome.OK
 
     def log_stream_status(self, stream_id: str) -> None:
@@ -150,10 +159,13 @@ class StdClient:
                                      headers={"Content-Type": "application/json"})
         except httpx.HTTPError as exc:
             log.error("Snapshot not sent, STD unreachable: %s", exc)
+            self.last_error = "std: unreachable"
             return Outcome.RETRY
 
         code = response.status_code
+        self.last_error = None
         if code >= 500:
+            self.last_error = f"std: {code} {describe_error(response)}"
             log.error("STD returned HTTP %d for the snapshot: %s", code, describe_error(response))
             return Outcome.RETRY
         if code in (200, 202):
@@ -165,6 +177,7 @@ class StdClient:
             log.error("STD refused the snapshot (HTTP %d): check STD_INGEST_KEY / key scope "
                       "(a stream belongs to the ingest key that created it) — %s",
                       code, describe_error(response))
+            self.last_error = f"std: {code} check STD_INGEST_KEY"
         elif code == 409:
             log.error("STD refused the snapshot (HTTP 409, key_type conflict with the existing "
                       "stream): %s", describe_error(response))
@@ -173,6 +186,8 @@ class StdClient:
                       describe_error(response))
         else:
             log.error("Unexpected HTTP %d for the snapshot: %s", code, describe_error(response))
+        if self.last_error is None:  # 400, 409, 413 and anything unexpected
+            self.last_error = f"std: {code} {describe_error(response)}"
         return Outcome.REJECTED
 
     def _accepted(self, stream_id: str, response: httpx.Response) -> Outcome:

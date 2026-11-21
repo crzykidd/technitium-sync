@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Annotated
 
-from pydantic import Field, SecretStr, ValidationError, field_validator
+from pydantic import Field, SecretStr, ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 STREAM_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
@@ -37,7 +37,12 @@ class Settings(BaseSettings):
 
     interval_seconds: int = Field(default=300, ge=MIN_INTERVAL)
     log_level: str = "INFO"
+    # Still written after each accepted snapshot, but no longer read by the healthcheck.
     heartbeat_file: str = "/tmp/technitium-sync.heartbeat"
+
+    health_port: int = Field(default=8080, ge=1, le=65535)
+    # Seconds /healthz tolerates since the last good push. Unset = 3 x interval_seconds.
+    health_max_age: int | None = Field(default=None, validate_default=True)
 
     @field_validator("technitium_url", "std_url")
     @classmethod
@@ -75,6 +80,18 @@ class Settings(BaseSettings):
             raise ValueError(
                 "must match ^[a-z0-9][a-z0-9_-]{0,62}$ (lower-case letters, digits, '-' and '_')"
             )
+        return value
+
+    @field_validator("health_max_age")
+    @classmethod
+    def _health_max_age(cls, value: int | None, info: ValidationInfo) -> int | None:
+        interval = info.data.get("interval_seconds")
+        if interval is None:  # INTERVAL_SECONDS is itself invalid and reported
+            return value
+        if value is None:
+            return 3 * interval
+        if value < interval:
+            raise ValueError(f"must be at least INTERVAL_SECONDS ({interval})")
         return value
 
     @field_validator("log_level")

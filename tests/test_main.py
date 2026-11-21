@@ -1,12 +1,11 @@
 import json
 import os
-import time
 
 import httpx
 import pytest
 import respx
 
-from technitium_sync.main import Backoff, Syncer, healthcheck
+from technitium_sync.main import Backoff, Syncer
 from technitium_sync.mapping import MAX_ITEMS
 from technitium_sync.std_client import StdClient
 from technitium_sync.technitium import TechnitiumClient
@@ -138,13 +137,3 @@ def test_backoff_caps():
     assert [b.next() for _ in range(6)] == [5, 10, 20, 40, 60, 60]
     b.reset()
     assert b.next() == 5
-
-
-def test_healthcheck(tmp_path):
-    hb = tmp_path / "hb"
-    env = {"HEARTBEAT_FILE": str(hb), "INTERVAL_SECONDS": "60"}
-    assert healthcheck(env) == 1  # no file yet
-    hb.write_text("x")
-    assert healthcheck(env) == 0
-    assert healthcheck(env, now=time.time() + 181) == 1
-    assert healthcheck(env, now=time.time() + 170) == 0

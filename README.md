@@ -115,7 +115,9 @@ stops the container with a message naming the variable.
 | `STREAM_DISPLAY_NAME` | `DHCP` | 1–32 chars. Used when STD creates the stream; you can rename it in STD later |
 | `INTERVAL_SECONDS` | `300` | Seconds between snapshots, minimum `60` |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` |
-| `HEARTBEAT_FILE` | `/tmp/technitium-sync.heartbeat` | Touched after each accepted snapshot; read by the healthcheck |
+| `HEALTH_PORT` | `8080` | Port of the health endpoint (all interfaces) |
+| `HEALTH_MAX_AGE` | 3 × `INTERVAL_SECONDS` | Seconds `/healthz` tolerates since the last good push; at least `INTERVAL_SECONDS` |
+| `HEARTBEAT_FILE` | `/tmp/technitium-sync.heartbeat` | Touched after each accepted snapshot. Kept for compatibility; the healthcheck no longer reads it |
 
 The tokens are never logged.
 
@@ -142,12 +144,42 @@ An ingest key can only post snapshots and read stream status. The stream belongs
 key that created it: a different ingest key gets 403 for that stream. Rotating the key
 keeps the binding.
 
-## Health check
+## Health endpoint
 
-The image's `HEALTHCHECK` runs `python -m technitium_sync healthcheck`. It is healthy
-while the last accepted snapshot (200, or 202 while the stream is pending) is newer than
-3 × `INTERVAL_SECONDS`. It's unhealthy before the first accepted snapshot, and when
-Technitium or STD has been failing for three intervals.
+technitium-sync listens on `HEALTH_PORT` (default `8080`, all interfaces) and reports
+whether pushes to STD actually work. A cycle counts as good only when Technitium was
+read **and** STD accepted the snapshot (200, or 202 while the stream is pending,
+disabled or ignored: the sidecar is doing its job, the stream state is STD's concern).
+
+`GET /healthz` returns one `text/plain` line:
+
+| Status | Body | When |
+|---|---|---|
+| 200 | `OK` | The last cycle succeeded and was within `HEALTH_MAX_AGE` |
+| 503 | `starting` | No cycle has finished yet |
+| 503 | `technitium: 401 unauthorized`, `technitium: invalid-token`, `technitium: unreachable` | The last Technitium read failed |
+| 503 | `std: 422 …`, `std: 401 check STD_INGEST_KEY`, `std: unreachable`, `std: streams not supported (needs STD 0.10.0)` | STD refused the snapshot or can't be reached |
+| 503 | `snapshot too large (5001 items > 5000)` | The snapshot was skipped for its size |
+| 503 | `last push 22m ago` | The last cycle succeeded but is older than `HEALTH_MAX_AGE` (e.g. a stuck loop) |
+
+The body never contains tokens or keys. Other paths return 404, other methods 405.
+
+`GET /status` returns the same verdict as JSON:
+
+```json
+{"version": "0.1.0", "stream_id": "technitium-dhcp",
+ "last_attempt_at": "2026-11-20T10:05:00Z", "last_success_at": "2026-11-20T10:05:00Z",
+ "last_error": null, "last_item_count": 42, "health_max_age_seconds": 900, "healthy": true}
+```
+
+**In STD**, add an http check for the service pointing at
+`http://technitium-sync:8080/healthz` with mode `body`: STD counts it up only when the
+body is exactly `OK` and shows any other body as the failure message. Publish the port
+(`ports: - "8080:8080"`) only if STD reaches the sidecar through the host.
+
+The image's `HEALTHCHECK` runs `python -m technitium_sync healthcheck`, which calls
+`/healthz` on `127.0.0.1` and exits 0 only on `200 OK` (printing the body otherwise),
+with 3 retries. `HEARTBEAT_FILE` is still written but no longer read by it.
 
 ## Reading the logs
 
