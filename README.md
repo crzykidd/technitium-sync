@@ -1,6 +1,6 @@
 # technitium-sync
 
-![version](https://img.shields.io/badge/version-0.1.0-blue)
+![version](https://img.shields.io/badge/version-0.2.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 A small sidecar that reads the **DHCP static reservations** from
@@ -25,6 +25,17 @@ see [Write your own sidecar](#write-your-own-sidecar).
 > **Requires** STD 0.10.0 or later (API revision 2, the `streams` feature).
 
 ## What's New
+
+### v0.2.0 (2026-11-20)
+
+A health endpoint that shows whether syncing actually works. `GET /healthz` answers
+`200 OK` only when the last Technitium read and STD push both succeeded within
+`HEALTH_MAX_AGE`, and otherwise `503` with a one-line reason (`technitium:
+invalid-token`, `std: 401 check STD_INGEST_KEY`, `last push 22m ago`, …). Point an STD
+http check in `body` mode at it, so a bad token or an STD error no longer shows green.
+`GET /status` gives the same details as JSON. The Docker healthcheck now uses
+`/healthz` too. New settings: `HEALTH_PORT` (default `8080`) and `HEALTH_MAX_AGE`. See
+[Health endpoint](#health-endpoint).
 
 ### v0.1.0 (2026-11-19)
 
@@ -167,7 +178,7 @@ The body never contains tokens or keys. Other paths return 404, other methods 40
 `GET /status` returns the same verdict as JSON:
 
 ```json
-{"version": "0.1.0", "stream_id": "technitium-dhcp",
+{"version": "0.2.0", "stream_id": "technitium-dhcp",
  "last_attempt_at": "2026-11-20T10:05:00Z", "last_success_at": "2026-11-20T10:05:00Z",
  "last_error": null, "last_item_count": 42, "health_max_age_seconds": 900, "healthy": true}
 ```
