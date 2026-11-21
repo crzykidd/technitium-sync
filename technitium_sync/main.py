@@ -9,7 +9,10 @@ import threading
 import time
 from pathlib import Path
 
-from technitium_sync.config import ConfigError, Settings, load_settings
+import httpx
+
+from technitium_sync.config import MAX_REPORTED_INTERVAL, ConfigError, Settings, load_settings
+from technitium_sync.health import HealthState, start_health_server
 from technitium_sync.mapping import MAX_BODY_BYTES, MAX_ITEMS, build_items
 from technitium_sync.std_client import Outcome, StdClient
 from technitium_sync.technitium import TechnitiumClient, TechnitiumError, read_reservations
@@ -39,12 +42,18 @@ class Backoff:
 class Syncer:
     """One run = one snapshot attempt. `run_once` returns the seconds to wait before the next."""
 
-    def __init__(self, settings: Settings, technitium: TechnitiumClient, std: StdClient):
+    def __init__(self, settings: Settings, technitium: TechnitiumClient, std: StdClient,
+                 health: HealthState | None = None):
         self.settings = settings
         self.technitium = technitium
         self.std = std
+        self.health = health or HealthState()
         self.backoff = Backoff(cap=settings.interval_seconds)
         self._std_ready = False
+        if settings.interval_seconds > MAX_REPORTED_INTERVAL:
+            log.warning("INTERVAL_SECONDS %d is over STD's maximum of %d: STD is told %d, so it may "
+                        "mark the stream stale early", settings.interval_seconds,
+                        MAX_REPORTED_INTERVAL, MAX_REPORTED_INTERVAL)
 
     def _retry(self) -> int:
         delay = self.backoff.next()
@@ -55,19 +64,27 @@ class Syncer:
         self.backoff.reset()
         return self.settings.interval_seconds
 
+    def _fail(self, reason: str) -> None:
+        self.health.record_failure(reason)
+
     def run_once(self) -> int:
         s = self.settings
 
         # Until STD has confirmed it speaks streams, check meta first: there's
-        # no point reading Technitium for a server that can't take the result.
-        if not self._std_ready:
+        # no point reading Technitium for a server that can't take the result. Check it
+        # again after a 400/409/413, because STD may have been swapped for another version.
+        if not self._std_ready or self.std.meta_recheck_needed:
+            first_check = not self._std_ready
             outcome = self.std.check_meta()
+            if outcome is not Outcome.OK:
+                self._fail(self.std.last_error or "std: unavailable")
             if outcome is Outcome.RETRY:
                 return self._retry()
             if outcome is Outcome.REJECTED:
                 return self._wait_interval()
             self._std_ready = True
-            self.std.log_stream_status(s.stream_id)
+            if first_check:
+                self.std.log_stream_status(s.stream_id)
 
         try:
             reservations = read_reservations(self.technitium, s.technitium_scopes)
@@ -75,6 +92,7 @@ class Syncer:
             # Never send a snapshot built from a failed read: STD would mark every
             # device missing.
             log.error("Technitium read failed, skipping this run (nothing sent): %s", exc)
+            self._fail(f"technitium: {exc.reason}")
             return self._wait_interval()
 
         result = build_items(reservations)
@@ -86,6 +104,7 @@ class Syncer:
             log.error("%d items is over STD's limit of %d per snapshot; skipping this run "
                       "(a partial snapshot would mark the rest missing). Narrow TECHNITIUM_SCOPES.",
                       len(result.items), MAX_ITEMS)
+            self._fail(f"snapshot too large ({len(result.items)} items > {MAX_ITEMS})")
             return self._wait_interval()
         if not reservations:
             log.warning("Technitium returned no reservations in the selected scopes: sending an "
@@ -100,18 +119,26 @@ class Syncer:
             "key_type": "mac",
             "items": result.items,
         }
+        if self.std.interval_supported:
+            # Optional, revision 3+ only; STD clears the stored value when it is absent,
+            # so it goes on every snapshot. An older STD would answer 400.
+            payload["snapshot_interval_seconds"] = s.reported_interval_seconds
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         if len(body) > MAX_BODY_BYTES:
             log.error("Snapshot body is %d bytes, over STD's 2 MiB limit; skipping this run",
                       len(body))
+            self._fail(f"snapshot too large ({len(body)} bytes > {MAX_BODY_BYTES})")
             return self._wait_interval()
 
         log.debug("Sending snapshot: %d item(s), %d bytes", len(result.items), len(body))
         outcome = self.std.put_snapshot(s.stream_id, body)
-        if outcome is Outcome.RETRY:
-            return self._retry()
         if outcome is Outcome.OK:
             touch_heartbeat(s.heartbeat_file)
+            self.health.record_success(len(result.items))
+        else:
+            self._fail(self.std.last_error or "std: snapshot not accepted")
+        if outcome is Outcome.RETRY:
+            return self._retry()
         return self._wait_interval()
 
 
@@ -122,28 +149,28 @@ def touch_heartbeat(path: str) -> None:
         log.warning("Cannot write heartbeat file %s: %s", path, exc)
 
 
-def healthcheck(env: dict | None = None, now: float | None = None) -> int:
-    """Exit 0 when the heartbeat is fresher than 3 × INTERVAL_SECONDS, else 1.
+def healthcheck(env: dict | None = None) -> int:
+    """Exit 0 only when the sidecar's own /healthz answers 200 `OK`, else print why and exit 1.
 
-    Reads only HEARTBEAT_FILE and INTERVAL_SECONDS, so it runs without the
-    secrets being valid. Used by the Docker HEALTHCHECK.
+    Reads only HEALTH_PORT, so it runs without the secrets being valid. Used by the
+    Docker HEALTHCHECK, which makes `/healthz` the one definition of healthy.
     """
     env = os.environ if env is None else env
-    path = env.get("HEARTBEAT_FILE", "/tmp/technitium-sync.heartbeat")
     try:
-        interval = max(int(env.get("INTERVAL_SECONDS", "300")), 60)
+        port = int(env.get("HEALTH_PORT", "8080"))
     except ValueError:
-        interval = 300
+        port = 8080
     try:
-        age = (time.time() if now is None else now) - os.path.getmtime(path)
-    except OSError:
-        print(f"unhealthy: no heartbeat at {path} yet")
+        response = httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=5)
+    except httpx.HTTPError as exc:
+        print(f"unhealthy: /healthz not reachable on port {port} ({type(exc).__name__})")
         return 1
-    if age > 3 * interval:
-        print(f"unhealthy: last successful snapshot {int(age)}s ago (limit {3 * interval}s)")
-        return 1
-    print(f"healthy: last successful snapshot {int(age)}s ago")
-    return 0
+    body = response.text.strip()
+    if response.status_code == 200 and body == "OK":
+        print("OK")
+        return 0
+    print(body or f"HTTP {response.status_code}")
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -186,17 +213,31 @@ def main(argv: list[str] | None = None) -> int:
                                   verify_tls=settings.technitium_verify_tls)
     std = StdClient(settings.std_url, settings.std_ingest_key.get_secret_value(),
                     verify_tls=settings.std_verify_tls)
-    syncer = Syncer(settings, technitium, std)
+    health = HealthState(
+        max_age=settings.health_max_age, stream_id=settings.stream_id,
+        secrets=[settings.technitium_token.get_secret_value(),
+                 settings.std_ingest_key.get_secret_value()])
+    try:
+        health_server = start_health_server(health, settings.health_port)
+    except OSError as exc:
+        print(f"technitium-sync: cannot listen on HEALTH_PORT {settings.health_port}: {exc}",
+              file=sys.stderr)
+        return 1
+    log.info("Health endpoint on port %d (/healthz, /status), max push age %ds",
+             settings.health_port, settings.health_max_age)
+    syncer = Syncer(settings, technitium, std, health)
     try:
         while not stop.is_set():
             try:
                 delay = syncer.run_once()
             except Exception:  # keep running: one bad run must not kill the sidecar
                 log.exception("Unexpected error in sync run")
+                health.record_failure("internal error (see logs)")
                 delay = settings.interval_seconds
             if stop.wait(delay):
                 break
     finally:
+        health_server.shutdown()
         technitium.close()
         std.close()
     log.info("Stopped")

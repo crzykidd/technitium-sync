@@ -25,7 +25,7 @@ people writing their own sidecars, so keep it small, readable and documented.
   Changelog; every operator-visible change gets an `[Unreleased]` entry in the same
   commit. Non-obvious calls go in `docs/decisions.md`, newest at top.
 - Layout: `technitium_sync/` (`config.py`, `technitium.py`, `mapping.py`,
-  `std_client.py`, `main.py`), run as `python -m technitium_sync`. Tests in `tests/`,
+  `std_client.py`, `health.py`, `main.py`), run as `python -m technitium_sync`. Tests in `tests/`,
   fixtures in `tests/fixtures/`.
 - Local checks (the same as CI): `ruff check .`, `pytest -q`, `docker build .`,
   `docker compose -f docker-compose.example.yml config --quiet`.

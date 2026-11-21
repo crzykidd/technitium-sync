@@ -6,6 +6,67 @@ the awkward parts of STD's ingest contract from the producer side, to raise with
 
 ---
 
+## 2026-11-20 — Send `snapshot_interval_seconds`, gated on API revision 3
+
+- **What.** STD 0.10.1 (API revision 3, PRD §18.5 / §18.9) accepts an optional
+  `snapshot_interval_seconds` (int, 60–86400) in the snapshot body and uses it for
+  staleness (no snapshot for more than 2 × interval). The PRD matches the handoff
+  prompt on name, type, range and placement (top-level in the PUT body). It is rolled
+  into the unreleased 0.2.0.
+- **Gate on the revision, not on trial and error.** `StdClient.api_revision` is an int
+  parsed from the `X-STD-API-Revision` header on every response (the `meta` body is the
+  fallback when the header is missing). The field is sent only when it is known and
+  ≥ 3; unknown or unparsable means leave it out. No timer and no per-run `meta` call:
+  the header already tracks the revision, including a downgrade (3 → 2 drops the field
+  from the next snapshot). The cost of that is one snapshot sent into a downgraded STD
+  before the header shows it, which is the 400 below.
+- **Re-check `meta` after a 400, 409 or 413** (`StdClient.meta_recheck_needed`, handled
+  at the top of `Syncer.run_once`). If that fails, nothing is pushed and the existing
+  retry and backoff apply, so "meta failed, so omit the field" holds because we never
+  push without `meta`. Rejections still log at ERROR and keep the normal schedule; the
+  400 message no longer says "a technitium-sync bug" and names a possible revision
+  mismatch and STD's last-rejection record. 202 (`pending`, `disabled`, `ignored`)
+  stays accepted: no backoff, a full snapshot every interval.
+- **Clamp, don't reject, above 86400.** `INTERVAL_SECONDS` already has a minimum of 60.
+  Rejecting at config time would break an operator who legitimately syncs less than
+  daily; clamping (`Settings.reported_interval_seconds`) with one startup WARNING is
+  smaller and harmless apart from STD flagging staleness early. No new env var.
+- **Below-3 warning** is logged once per revision change (`_set_revision`), not per run.
+
+---
+
+## 2026-11-20 — HTTP health endpoint (`/healthz`, `/status`)
+
+- **Supersedes** the "HTTP health endpoint was rejected" point of the 2026-11-17
+  "Heartbeat-file healthcheck" entry. STD needs to check push health over the network
+  (http check, mode `body`: up only when the body is exactly `OK`), and a container
+  check alone showed green with a bad token or an STD 4xx/5xx. The cost, one listening
+  port on an otherwise outbound-only sidecar, is accepted.
+- **Health is the last cycle, not the last success.** A cycle succeeds only when the
+  Technitium read worked and STD accepted the snapshot. After any failure `/healthz` is
+  503 with the reason even if the last success is recent; success clears it. `OK` is
+  never returned before the first success (`starting`). A stale last success is 503
+  `last push Nm ago`.
+- **202 counts as healthy** (as with the heartbeat): pending, disabled or ignored
+  means the sidecar is doing its job; the stream state is STD's concern.
+- **Reasons are built, not echoed.** Short prefixed strings from status codes and STD's
+  error text (`describe_error`), never exception reprs. The state also scrubs the two
+  configured secrets, collapses whitespace and caps the line at 200 chars. `StdClient`
+  keeps `last_error`, `TechnitiumError` carries a `reason`.
+- **Config.** `HEALTH_MAX_AGE` defaults to 3 × `INTERVAL_SECONDS` and must be at least
+  `INTERVAL_SECONDS`. `HEALTH_PORT` defaults to 8080. No `HEALTH_BIND`: the container
+  must listen on all interfaces for STD, and the port is only reachable from outside
+  when the operator publishes it or shares a Docker network, so a bind setting adds
+  little. If the port is taken, startup fails with a message. Request lines log at DEBUG.
+- **Docker healthcheck** now calls `/healthz` (one definition of healthy) and keeps
+  `HEARTBEAT_FILE` written and accepted so existing deployments don't break; nothing
+  reads it. Because one failed cycle now flips health, `--retries` went from 1 to 3
+  (interval 60s, so about 3 minutes) to avoid flapping on a blip; STD's own check is
+  the fast signal.
+- **Stdlib only** (`ThreadingHTTPServer` on a daemon thread), no new dependency.
+
+---
+
 ## 2026-11-19 — First release 0.1.0: one-time skip of the "not newer" check
 
 - **Why.** `VERSION` was already `0.1.0` from the scaffold, and `/release-prep` refuses
@@ -134,3 +195,10 @@ around here; listed so they can be raised with STD.
     "details": {"stream_id": "..."}}`. `details` carries no reason code, so a producer still
     can't branch on it (see 2). Note 7 was also seen live: a stream an operator disabled
     answers `202` with `stream_status: "disabled"`, sharing the pending path.
+11. **An optional field that an older revision rejects forces producers to gate on the
+    revision.** `snapshot_interval_seconds` (revision 3) is optional, but STD 0.10.0
+    answers 400 to unknown keys (`extra="forbid"`), so every producer must read
+    `api_revision` and conditionally build its body, plus handle a downgrade. Ignoring
+    unknown fields (or listing accepted ones in `meta`) would be friendlier. Also,
+    omitting the field clears the stored value, so a producer that skips one snapshot
+    silently loses its interval.
